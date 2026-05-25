@@ -1,4 +1,4 @@
-"""가격 수집기 — KRX(pykrx) + 빗썸 API"""
+"""가격 수집기 — KRX + 빗썸 + 미국 시장 (yfinance/Yahoo)"""
 import requests
 from datetime import datetime, timedelta
 from market_prediction.config import BITHUMB_API_URL
@@ -9,9 +9,15 @@ try:
 except ImportError:
     krx = None
 
+try:
+    import yfinance as yf
+except ImportError:
+    yf = None
+
+
+# --- 한국 시장 ---
 
 def fetch_kospi_ohlcv(days=7):
-    """pykrx로 KOSPI 지수 OHLCV 수집"""
     if not krx:
         print("[가격] pykrx 미설치 — KOSPI 수집 건너뜀")
         return []
@@ -40,8 +46,9 @@ def fetch_kospi_ohlcv(days=7):
         return []
 
 
+# --- 암호화폐 ---
+
 def fetch_bithumb_ticker(coin="BTC"):
-    """빗썸 Public API — 실시간 시세"""
     try:
         url = f"{BITHUMB_API_URL}/ticker/{coin}_KRW"
         resp = requests.get(url, timeout=10)
@@ -63,7 +70,6 @@ def fetch_bithumb_ticker(coin="BTC"):
 
 
 def fetch_bithumb_candlestick(coin="BTC", interval="24h"):
-    """빗썸 캔들스틱 API — 최근 7일"""
     try:
         url = f"{BITHUMB_API_URL}/candlestick/{coin}_KRW/{interval}"
         resp = requests.get(url, timeout=10)
@@ -85,6 +91,87 @@ def fetch_bithumb_candlestick(coin="BTC", interval="24h"):
         print(f"[가격] 빗썸 캔들 수집 실패: {exc}")
         return []
 
+
+# --- 미국 시장 (yfinance) ---
+
+US_SYMBOLS = {
+    "^GSPC": "SP500",
+    "^IXIC": "NASDAQ",
+    "^DJI": "DOW",
+    "^VIX": "VIX",
+    "DX-Y.NYB": "DXY",
+    "GC=F": "GOLD",
+    "CL=F": "WTI_OIL",
+    "^TNX": "US10Y",
+}
+
+
+def fetch_us_market(days=7):
+    if not yf:
+        return _fetch_us_market_fallback(days)
+
+    records = []
+    end = datetime.now()
+    start = end - timedelta(days=days + 5)
+
+    for ticker, symbol in US_SYMBOLS.items():
+        try:
+            data = yf.download(ticker, start=start, end=end,
+                               progress=False, auto_adjust=True)
+            if data.empty:
+                continue
+            for date, row in data.tail(days).iterrows():
+                records.append({
+                    "market": "US",
+                    "symbol": symbol,
+                    "date": date.strftime("%Y-%m-%d"),
+                    "open": float(row["Open"]),
+                    "high": float(row["High"]),
+                    "low": float(row["Low"]),
+                    "close": float(row["Close"]),
+                    "volume": float(row.get("Volume", 0)),
+                })
+        except Exception as exc:
+            print(f"[가격] {symbol} 수집 실패: {exc}")
+
+    return records
+
+
+def _fetch_us_market_fallback(days=7):
+    """yfinance 없을 때 Yahoo Finance chart API 직접 호출"""
+    records = []
+    for ticker, symbol in US_SYMBOLS.items():
+        try:
+            url = (
+                f"https://query1.finance.yahoo.com/v8/finance/chart/{ticker}"
+                f"?range={days + 3}d&interval=1d"
+            )
+            resp = requests.get(url, timeout=15, headers={
+                "User-Agent": "Mozilla/5.0"
+            })
+            resp.raise_for_status()
+            result = resp.json()["chart"]["result"][0]
+            timestamps = result["timestamp"]
+            quotes = result["indicators"]["quote"][0]
+
+            for i in range(max(0, len(timestamps) - days), len(timestamps)):
+                records.append({
+                    "market": "US",
+                    "symbol": symbol,
+                    "date": datetime.fromtimestamp(timestamps[i]).strftime("%Y-%m-%d"),
+                    "open": float(quotes["open"][i] or 0),
+                    "high": float(quotes["high"][i] or 0),
+                    "low": float(quotes["low"][i] or 0),
+                    "close": float(quotes["close"][i] or 0),
+                    "volume": float(quotes.get("volume", [0] * len(timestamps))[i] or 0),
+                })
+        except Exception as exc:
+            print(f"[가격] {symbol} 폴백 수집 실패: {exc}")
+
+    return records
+
+
+# --- 저장/조회 ---
 
 def save_prices(records, db_path=None):
     now = datetime.now().isoformat()
@@ -116,11 +203,24 @@ def get_recent_prices(symbol="KOSPI", days=7, db_path=None):
     return [dict(r) for r in rows]
 
 
+def get_all_recent_prices(days=7, db_path=None):
+    """모든 심볼의 최근 가격을 딕셔너리로 반환"""
+    symbols = ["KOSPI", "BTC", "ETH", "SP500", "NASDAQ", "DOW",
+               "VIX", "DXY", "GOLD", "WTI_OIL", "US10Y"]
+    result = {}
+    for sym in symbols:
+        prices = get_recent_prices(sym, days, db_path)
+        if prices:
+            result[sym] = prices
+    return result
+
+
 if __name__ == "__main__":
     from market_prediction.utils.db import init_db
     init_db()
 
     kospi = fetch_kospi_ohlcv()
     btc = fetch_bithumb_candlestick("BTC")
-    n = save_prices(kospi + btc)
-    print(f"가격 {n}건 저장")
+    us = fetch_us_market()
+    n = save_prices(kospi + btc + us)
+    print(f"가격 {n}건 저장 (한국 {len(kospi)}, 암호화폐 {len(btc)}, 미국 {len(us)})")
