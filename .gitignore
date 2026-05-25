@@ -4,4 +4,5 @@ __pycache__/
 *.db-wal
 *.db-shm
 report_*.html
+sample_report.html
 .DS_Store
