@@ -4,3 +4,9 @@ neo4j
 openai==1.10.0
 python-dotenv
 tiktoken
+
+# Market Prediction
+anthropic>=0.40.0
+feedparser>=6.0
+pykrx>=1.0
+yfinance>=0.2.0

@@ -1,2 +1,43 @@
+# 환경변수 / 시크릿 — 절대 커밋 금지
 .env
+.env.*
+!.env.example
+*.key
+*.pem
+*.p12
+*.pfx
+credentials.json
+secrets.yaml
+secrets.yml
+
+# Python
 __pycache__/
+*.pyc
+*.pyo
+*.egg-info/
+dist/
+build/
+.venv/
+venv/
+
+# DB / 캐시
+*.db
+*.db-wal
+*.db-shm
+*.sqlite3
+
+# 생성된 리포트
+report_*.html
+sample_report.html
+
+# OS
+.DS_Store
+Thumbs.db
+*.swp
+*.swo
+*~
+
+# IDE
+.vscode/
+.idea/
+*.code-workspace
